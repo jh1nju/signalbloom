@@ -64,10 +64,12 @@ class BandwidthTest:
         self._measure = measure
         self._last_run: float | None = None
 
+    def due(self) -> bool:
+        return self._last_run is None or self._clock() - self._last_run >= self._interval
+
     def maybe_run(self) -> float | None:
         """Download speed if a test was due (and worked), otherwise None."""
-        now = self._clock()
-        if self._last_run is not None and now - self._last_run < self._interval:
+        if not self.due():
             return None
-        self._last_run = now
+        self._last_run = self._clock()
         return self._measure(self._size_mb)

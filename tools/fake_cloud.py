@@ -1,9 +1,14 @@
 """Fake SignalBloom cloud. FOR LOCAL TESTING ONLY. Standard library only.
 
-Implements the four endpoints in docs/API.md with in-memory data.
-Accepts one setup code, TEST-CODE-0001, once.
+Implements the four endpoints in docs/API.md. Registered sites (and their
+tokens) and received readings are saved to a state file so a restart keeps
+them; devices and commands are kept in memory only. Accepts one setup code,
+TEST-CODE-0001, once.
 
-Run:  python tools/fake_cloud.py [--port 8080] [--with-command]
+Also: GET /debug/summary shows, per site, how many readings arrived, the
+earliest and latest measured_at, and the device list.
+
+Run:  python tools/fake_cloud.py [--port 8080] [--with-command] [--state PATH]
 Then set cloud_url: http://localhost:8080 in config.yaml.
 """
 
@@ -14,11 +19,14 @@ import secrets
 import socket
 import threading
 from datetime import datetime, timezone
+from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 SETUP_CODE = "TEST-CODE-0001"
 MAX_READINGS = 500
 RESULT_PATH = re.compile(r"/api/agent/commands/([^/]+)/result")
+# Holds site tokens in plain text: testing only, and listed in .gitignore.
+DEFAULT_STATE_PATH = Path(__file__).resolve().parent / ".fake_cloud_state.json"
 
 
 def now() -> str:
@@ -26,16 +34,75 @@ def now() -> str:
 
 
 class FakeCloud:
-    """All state lives here, in memory."""
+    """All state lives here. code_used, sites and readings are saved to state_path."""
 
-    def __init__(self, with_command: bool = False):
+    def __init__(self, with_command: bool = False, state_path: str | Path | None = None):
         self.lock = threading.Lock()
         self.with_command = with_command
+        self.state_path = Path(state_path) if state_path else None
         self.code_used = False
         self.sites = {}      # site_token -> site_id
         self.readings = {}   # site_id -> {measured_at: reading}
         self.devices = {}    # site_id -> {mac: device}
         self.commands = {}   # command id -> {"site_id", "command", "sent", "result"}
+        self.load_state()
+
+    def load_state(self) -> None:
+        if self.state_path is None or not self.state_path.is_file():
+            return
+        try:
+            state = json.loads(self.state_path.read_text(encoding="utf-8"))
+            self.code_used = bool(state["code_used"])
+            self.sites = {str(k): str(v) for k, v in state["sites"].items()}
+            # Older state files have no readings yet.
+            self.readings = {
+                str(site_id): {str(t): r for t, r in by_time.items() if isinstance(r, dict)}
+                for site_id, by_time in state.get("readings", {}).items()
+            }
+        except (ValueError, KeyError, TypeError, AttributeError):
+            print(f"Ignoring unreadable state file {self.state_path}", flush=True)
+
+    def save_state(self) -> None:
+        """Call with self.lock held."""
+        if self.state_path is None:
+            return
+        tmp = self.state_path.with_suffix(".tmp")
+        state = {"code_used": self.code_used, "sites": self.sites, "readings": self.readings}
+        tmp.write_text(json.dumps(state), encoding="utf-8")
+        tmp.replace(self.state_path)
+
+    def summary(self) -> dict:
+        with self.lock:
+            sites = {
+                site_id: {
+                    "readings": len(self.readings.get(site_id, {})),
+                    **time_range(self.readings.get(site_id, {})),
+                    "devices": [
+                        {k: d.get(k) for k in ("mac", "ip", "hostname", "online")}
+                        for d in self.devices.get(site_id, {}).values()
+                    ],
+                }
+                for site_id in sorted(set(self.sites.values()))
+            }
+        return {"total_readings": sum(s["readings"] for s in sites.values()), "sites": sites}
+
+
+def time_range(by_time: dict) -> dict:
+    """Earliest and latest measured_at, compared as times (not text), so
+    readings with different time zones sort correctly. Unparseable ones are skipped.
+    """
+    parsed = []
+    for text in by_time:
+        try:
+            moment = datetime.fromisoformat(text)
+        except ValueError:
+            continue
+        if moment.tzinfo is None:  # the API requires a zone; assume local if missing
+            moment = moment.astimezone()
+        parsed.append((moment, text))
+    if not parsed:
+        return {"earliest_measured_at": None, "latest_measured_at": None}
+    return {"earliest_measured_at": min(parsed)[1], "latest_measured_at": max(parsed)[1]}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -60,6 +127,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/api/agent/commands":
             return self.list_commands()
+        if self.path == "/debug/summary":
+            return self.send_json(200, self.cloud.summary())
         self.send_error_json(404, "not_found", "No such endpoint.")
 
     # Helpers
@@ -118,6 +187,7 @@ class Handler(BaseHTTPRequestHandler):
             site_id = "site_" + secrets.token_hex(3)
             site_token = "sbt_test_" + secrets.token_hex(16)
             self.cloud.sites[site_token] = site_id
+            self.cloud.save_state()
             if self.cloud.with_command:
                 command_id = "cmd_" + secrets.token_hex(2)
                 self.cloud.commands[command_id] = {
@@ -175,6 +245,10 @@ class Handler(BaseHTTPRequestHandler):
             for device in body.get("devices") or []:
                 if isinstance(device, dict) and "mac" in device:
                     devices[device["mac"]] = device
+            if accepted:
+                self.cloud.save_state()
+        if accepted or duplicates:
+            print(f"{site_id}: {accepted} accepted, {duplicates} duplicates", flush=True)
         self.send_json(202, {"accepted": accepted, "duplicates": duplicates})
 
     # 3. Commands
@@ -224,9 +298,10 @@ class IPv6Server(ThreadingHTTPServer):
     address_family = socket.AF_INET6
 
 
-def make_server(port: int = 8080, with_command: bool = False) -> ThreadingHTTPServer:
+def make_server(port: int = 8080, with_command: bool = False,
+                state_path: str | Path | None = None) -> ThreadingHTTPServer:
     server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
-    server.cloud = FakeCloud(with_command=with_command)
+    server.cloud = FakeCloud(with_command=with_command, state_path=state_path)
     return server
 
 
@@ -251,13 +326,22 @@ def main() -> None:
         "--with-command", action="store_true",
         help="queue one simulated restart_device command for each new site",
     )
+    parser.add_argument(
+        "--state", default=str(DEFAULT_STATE_PATH),
+        help="file that keeps registered sites across restarts (default: %(default)s)",
+    )
     args = parser.parse_args()
-    server = make_server(args.port, args.with_command)
+    server = make_server(args.port, args.with_command, args.state)
     twin = make_ipv6_twin(server, args.port)
     if twin:
         threading.Thread(target=twin.serve_forever, daemon=True).start()
     print(f"Fake SignalBloom cloud on http://localhost:{args.port} (testing only)", flush=True)
-    print(f"Setup code: {SETUP_CODE} (works once). Ctrl+C to stop.", flush=True)
+    if server.cloud.code_used:
+        print(f"Setup code already used; {len(server.cloud.sites)} site(s) loaded from "
+              f"{args.state}. Delete that file to start fresh.", flush=True)
+    else:
+        print(f"Setup code: {SETUP_CODE} (works once). Ctrl+C to stop.", flush=True)
+    print(f"Summary: http://localhost:{args.port}/debug/summary", flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

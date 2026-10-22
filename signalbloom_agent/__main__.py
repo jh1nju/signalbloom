@@ -5,7 +5,7 @@ import json
 import sys
 from datetime import datetime
 
-from . import __version__
+from .agent import run, setup_logging
 from .collectors import CollectorError
 from .collectors.bandwidth import measure_download_mbps
 from .collectors.devices import DeviceScanner
@@ -14,6 +14,7 @@ from .collectors.ping import ping
 from .collectors.uptime import internet_up
 from .config import DEFAULT_PATH, Config, ConfigError, load_config
 from .register import RegistrationError, ensure_registered
+from .sender import AuthError
 
 
 def collect_once(config: Config) -> int:
@@ -94,9 +95,18 @@ def main(argv: list[str] | None = None) -> int:
     else:
         print(f"Registered as site {config.site_id}.")
 
-    print(f"SignalBloom agent v{__version__}: nothing else to run yet.")
     if args.demo_fault:
         print("--demo-fault is not implemented yet.")
+
+    setup_logging(config.data_dir)
+    try:
+        run(config)
+    except KeyboardInterrupt:
+        print("Stopped.")
+        return 0
+    except (AuthError, CollectorError) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
     return 0
 
 

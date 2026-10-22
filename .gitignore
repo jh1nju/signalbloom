@@ -3,7 +3,11 @@
 __pycache__/
 *.pyc
 .pytest_cache/
+.pytest-tmp*/
 
 # Local agent state: config.yaml holds the site token and must never be committed
 config.yaml
 data/
+
+# Fake cloud state (holds test site tokens)
+tools/.fake_cloud_state.json

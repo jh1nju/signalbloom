@@ -10,6 +10,7 @@ import yaml
 DEFAULT_PATH = "config.yaml"
 DEFAULT_PUBLIC_ADDRESS = "1.1.1.1"
 DEFAULT_DEVICE_SCAN_SECONDS = 300
+DEFAULT_DEVICE_RECHECK_SECONDS = 20
 DEFAULT_BANDWIDTH_TEST_MB = 25
 MAX_BANDWIDTH_TEST_MB = 500
 
@@ -34,6 +35,7 @@ class Config:
     router_address: str | None = None  # None = find it automatically
     public_address: str = DEFAULT_PUBLIC_ADDRESS
     device_scan_seconds: int = DEFAULT_DEVICE_SCAN_SECONDS
+    device_recheck_seconds: int = DEFAULT_DEVICE_RECHECK_SECONDS
     bandwidth_test_mb: int = DEFAULT_BANDWIDTH_TEST_MB
 
     def __repr__(self) -> str:
@@ -47,6 +49,7 @@ class Config:
             f"router_address={self.router_address!r}, "
             f"public_address={self.public_address!r}, "
             f"device_scan_seconds={self.device_scan_seconds}, "
+            f"device_recheck_seconds={self.device_recheck_seconds}, "
             f"bandwidth_test_mb={self.bandwidth_test_mb})"
         )
 
@@ -58,7 +61,7 @@ def _validate(raw: dict, path: Path) -> None:
         if raw.get(key) in (None, ""):
             problems.append(f"'{key}' is missing")
     for key in ("interval_seconds", "bandwidth_interval_seconds",
-                "device_scan_seconds", "bandwidth_test_mb"):
+                "device_scan_seconds", "device_recheck_seconds", "bandwidth_test_mb"):
         v = raw.get(key)
         if v not in (None, "") and (isinstance(v, bool) or not isinstance(v, int) or v <= 0):
             problems.append(f"'{key}' must be a whole number above 0")
@@ -109,5 +112,6 @@ def load_config(path: str | Path = DEFAULT_PATH) -> Config:
         router_address=raw.get("router_address") or None,
         public_address=raw.get("public_address") or DEFAULT_PUBLIC_ADDRESS,
         device_scan_seconds=raw.get("device_scan_seconds") or DEFAULT_DEVICE_SCAN_SECONDS,
+        device_recheck_seconds=raw.get("device_recheck_seconds") or DEFAULT_DEVICE_RECHECK_SECONDS,
         bandwidth_test_mb=raw.get("bandwidth_test_mb") or DEFAULT_BANDWIDTH_TEST_MB,
     )

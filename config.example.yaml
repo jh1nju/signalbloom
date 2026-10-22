@@ -25,8 +25,10 @@ bandwidth_interval_seconds: 900
 bandwidth_test_mb: 25
 
 # How often to run a full scan for devices on the network (seconds).
-# Between full scans, devices already found are rechecked every interval_seconds.
 device_scan_seconds: 300
+
+# How often to recheck devices already found, between full scans (seconds).
+device_recheck_seconds: 20
 
 # Where the agent keeps readings it could not send yet.
 data_dir: ./data

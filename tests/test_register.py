@@ -101,7 +101,7 @@ def test_network_recovers_after_retry(config_path):
 
 def test_main_never_prints_token(config_path, monkeypatch, capsys, caplog):
     monkeypatch.chdir(config_path.parent)
-    with patch(POST, return_value=SUCCESS):
+    with patch(POST, return_value=SUCCESS), patch("signalbloom_agent.__main__.run"):
         assert main([]) == 0
         assert main([]) == 0  # second run: already registered
     out = capsys.readouterr()

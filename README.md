@@ -13,7 +13,7 @@ The agent is a small Python program that runs on a computer inside a customer's 
 
 The contract between the agent and the cloud is [docs/API.md](docs/API.md). The product spec is [docs/SPEC.md](docs/SPEC.md).
 
-> Status: project skeleton only. Measurements and network calls are not built yet.
+> Status: registration, measuring and sending work. Collecting approved fixes is not built yet.
 
 ### Install
 
@@ -38,13 +38,22 @@ Edit `config.yaml` and set `cloud_url` and `setup_code`. Leave `site_id` and `si
 ### Run
 
 ```powershell
-python -m signalbloom_agent              # start the agent
+python -m signalbloom_agent              # register if needed, then measure and send until Ctrl+C
 python -m signalbloom_agent --demo-fault # inject a fake fault for demos (not implemented yet)
 python -m signalbloom_agent --help
 python -m signalbloom_agent --collect-once  # measure once, print the reading, exit (nothing is sent)
 ```
 
 `--collect-once` prints a body shaped like `POST /api/ingest` in docs/API.md: `{"readings": [...], "devices": [...]}`. Latency and packet loss are measured to `public_address` (default 1.1.1.1). `download_mbps` comes from timing an HTTPS download of `bandwidth_test_mb` megabytes. `devices` comes from pinging every address in the local /24 and reading the ARP table (no admin rights needed). It takes 10–30 seconds. The router (`router_address`, or the default gateway if blank) is shown on a separate "local only" line.
+
+With no flags the agent runs until Ctrl+C:
+
+- Every `interval_seconds` (30) it pings `public_address` and sends one reading to `POST /api/ingest` with the current device list. Timing uses a monotonic clock, so it doesn't drift.
+- Devices are rechecked every `device_recheck_seconds` (20) and fully rescanned every `device_scan_seconds` (300), in a background thread.
+- The bandwidth test runs every `bandwidth_interval_seconds` (900) in the background, started right after a ping. Its result goes into the next reading.
+- If the cloud can't be reached or returns a 5xx error, readings are kept in `data_dir/buffer.jsonl` and sent oldest first (up to 500 per request) once it's back. The buffer holds 24 hours of readings and drops the oldest after that.
+- A reading the cloud rejects with 400 is saved to `data_dir/rejected.jsonl`. A 401 or 403 stops the agent with instructions to register again.
+- Each send writes one line to the console and to `data_dir/agent.log`, for example `sent 1 reading, 0 duplicates` or `cloud unreachable, 3 readings buffered`. The site token is never logged.
 
 On first run the agent registers with `setup_code`, saves `site_id` and `site_token` into `config.yaml`, clears `setup_code`, and limits the file to your user account. Later runs skip registration.
 
@@ -56,7 +65,9 @@ python -m pytest
 
 ### Try it against the fake cloud (testing only)
 
-`tools/fake_cloud.py` is a local stand-in for the cloud app. It implements the four endpoints in docs/API.md with in-memory data, and accepts one setup code, `TEST-CODE-0001`, once.
+`tools/fake_cloud.py` is a local stand-in for the cloud app. It implements the four endpoints in docs/API.md and accepts one setup code, `TEST-CODE-0001`, once. Registered sites and received readings are saved to `tools/.fake_cloud_state.json` (git-ignored), so a restart keeps the token and the readings; delete that file to start fresh. Devices and commands are kept in memory only.
+
+`http://localhost:8080/debug/summary` shows, for each site, how many readings have arrived, the earliest and latest `measured_at`, and the current device list with online status.
 
 ```powershell
 python tools/fake_cloud.py               # add --with-command to queue a simulated fix

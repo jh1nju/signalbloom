@@ -101,12 +101,16 @@ def test_localhost_http_allowed(tmp_path):
 def test_scan_and_bandwidth_size_from_example():
     config = load_config(EXAMPLE)
     assert config.device_scan_seconds == 300
+    assert config.device_recheck_seconds == 20
     assert config.bandwidth_test_mb == 25
 
 
 def test_scan_and_bandwidth_size_default_when_missing(tmp_path):
-    config = load_config(write_config(tmp_path, device_scan_seconds=None, bandwidth_test_mb=None))
+    config = load_config(write_config(
+        tmp_path, device_scan_seconds=None, device_recheck_seconds=None, bandwidth_test_mb=None
+    ))
     assert config.device_scan_seconds == 300
+    assert config.device_recheck_seconds == 20
     assert config.bandwidth_test_mb == 25
 
 
@@ -115,6 +119,7 @@ def test_scan_and_bandwidth_size_default_when_missing(tmp_path):
     [
         ({"device_scan_seconds": 0}, "'device_scan_seconds' must be a whole number above 0"),
         ({"device_scan_seconds": "5m"}, "'device_scan_seconds' must be a whole number above 0"),
+        ({"device_recheck_seconds": 0}, "'device_recheck_seconds' must be a whole number above 0"),
         ({"bandwidth_test_mb": -1}, "'bandwidth_test_mb' must be a whole number above 0"),
         ({"bandwidth_test_mb": True}, "'bandwidth_test_mb' must be a whole number above 0"),
         ({"bandwidth_test_mb": 501}, "'bandwidth_test_mb' must be 500 or less"),

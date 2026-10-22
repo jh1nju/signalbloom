@@ -266,6 +266,11 @@ class DeviceScanner:
         self._history: dict[str, _History] = {}  # mac -> ping history
         self._last_scan: float | None = None
 
+    @property
+    def last_full_scan(self) -> float | None:
+        """Clock time of the last full scan (None before the first)."""
+        return self._last_scan
+
     def devices(self) -> list[dict]:
         now = self._clock()
         if self._last_scan is None or now - self._last_scan >= self._scan_seconds:
