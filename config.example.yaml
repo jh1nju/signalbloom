@@ -1,0 +1,23 @@
+# SignalBloom agent config. Copy this file to config.yaml and fill it in.
+# config.yaml will hold your site token, so never commit it (it is in .gitignore).
+# See docs/API.md for the contract these values come from.
+
+# Base HTTPS address of the SignalBloom cloud app, without /api on the end.
+cloud_url: https://your-cloud-run-url.a.run.app
+
+# One-time setup code shown in Account & Settings when an Admin creates a site.
+# Codes work once and expire after 24 hours.
+setup_code: SB-XXXX-XXXX
+
+# Leave these blank. The agent fills them in after it registers.
+site_id:
+site_token:
+
+# How often to send readings and check for approved fixes (seconds).
+interval_seconds: 30
+
+# How often to run the bandwidth test (seconds). 900 = 15 minutes.
+bandwidth_interval_seconds: 900
+
+# Where the agent keeps readings it could not send yet.
+data_dir: ./data

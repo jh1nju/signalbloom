@@ -1,0 +1,9 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Local agent state: config.yaml holds the site token and must never be committed
+config.yaml
+data/
