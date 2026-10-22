@@ -43,8 +43,22 @@ python -m signalbloom_agent --demo-fault # inject a fake fault for demos (not im
 python -m signalbloom_agent --help
 ```
 
+On first run the agent registers with `setup_code`, saves `site_id` and `site_token` into `config.yaml`, clears `setup_code`, and limits the file to your user account. Later runs skip registration.
+
 ### Test
 
 ```powershell
 python -m pytest
 ```
+
+### Try it against the fake cloud (testing only)
+
+`tools/fake_cloud.py` is a local stand-in for the cloud app. It implements the four endpoints in docs/API.md with in-memory data, and accepts one setup code, `TEST-CODE-0001`, once.
+
+```powershell
+python tools/fake_cloud.py               # add --with-command to queue a simulated fix
+```
+
+In `config.yaml`, set `cloud_url: http://localhost:8080` and `setup_code: TEST-CODE-0001`, then run the agent in another terminal.
+
+Known limitations are listed in [docs/LIMITATIONS.md](docs/LIMITATIONS.md).
