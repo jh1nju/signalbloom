@@ -1,5 +1,6 @@
 """Load and check the agent's config.yaml."""
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlparse
@@ -7,6 +8,14 @@ from urllib.parse import urlparse
 import yaml
 
 DEFAULT_PATH = "config.yaml"
+DEFAULT_PUBLIC_ADDRESS = "1.1.1.1"
+DEFAULT_DEVICE_SCAN_SECONDS = 300
+DEFAULT_BANDWIDTH_TEST_MB = 25
+MAX_BANDWIDTH_TEST_MB = 500
+
+# Hostnames and IPv4/IPv6 addresses. Must not start with "-", so a value like
+# "-t" can't be passed to ping as an option.
+_TARGET = re.compile(r"^[A-Za-z0-9:][A-Za-z0-9.:\-]*$")
 
 
 class ConfigError(Exception):
@@ -22,6 +31,10 @@ class Config:
     interval_seconds: int
     bandwidth_interval_seconds: int
     data_dir: Path
+    router_address: str | None = None  # None = find it automatically
+    public_address: str = DEFAULT_PUBLIC_ADDRESS
+    device_scan_seconds: int = DEFAULT_DEVICE_SCAN_SECONDS
+    bandwidth_test_mb: int = DEFAULT_BANDWIDTH_TEST_MB
 
     def __repr__(self) -> str:
         # Never show the site token, so it can't end up in logs (docs/API.md).
@@ -30,7 +43,11 @@ class Config:
             f"Config(cloud_url={self.cloud_url!r}, site_id={self.site_id!r}, "
             f"site_token={token!r}, interval_seconds={self.interval_seconds}, "
             f"bandwidth_interval_seconds={self.bandwidth_interval_seconds}, "
-            f"data_dir={str(self.data_dir)!r})"
+            f"data_dir={str(self.data_dir)!r}, "
+            f"router_address={self.router_address!r}, "
+            f"public_address={self.public_address!r}, "
+            f"device_scan_seconds={self.device_scan_seconds}, "
+            f"bandwidth_test_mb={self.bandwidth_test_mb})"
         )
 
 
@@ -40,10 +57,14 @@ def _validate(raw: dict, path: Path) -> None:
     for key in ("cloud_url", "interval_seconds", "bandwidth_interval_seconds", "data_dir"):
         if raw.get(key) in (None, ""):
             problems.append(f"'{key}' is missing")
-    for key in ("interval_seconds", "bandwidth_interval_seconds"):
+    for key in ("interval_seconds", "bandwidth_interval_seconds",
+                "device_scan_seconds", "bandwidth_test_mb"):
         v = raw.get(key)
         if v not in (None, "") and (isinstance(v, bool) or not isinstance(v, int) or v <= 0):
             problems.append(f"'{key}' must be a whole number above 0")
+    mb = raw.get("bandwidth_test_mb")
+    if isinstance(mb, int) and not isinstance(mb, bool) and mb > MAX_BANDWIDTH_TEST_MB:
+        problems.append(f"'bandwidth_test_mb' must be {MAX_BANDWIDTH_TEST_MB} or less")
     url = str(raw.get("cloud_url") or "")
     parsed = urlparse(url)
     local = parsed.scheme == "http" and parsed.hostname in {"localhost", "127.0.0.1"}
@@ -51,6 +72,10 @@ def _validate(raw: dict, path: Path) -> None:
         problems.append("'cloud_url' must start with https://")
     if not raw.get("site_token") and not raw.get("setup_code"):
         problems.append("add a 'setup_code' from the dashboard to register this site")
+    for key in ("router_address", "public_address"):
+        v = raw.get(key)
+        if v not in (None, "") and not (isinstance(v, str) and _TARGET.match(v)):
+            problems.append(f"'{key}' must be an IP address or hostname")
     if problems:
         raise ConfigError(f"{path}: " + "; ".join(problems))
 
@@ -81,4 +106,8 @@ def load_config(path: str | Path = DEFAULT_PATH) -> Config:
         interval_seconds=raw["interval_seconds"],
         bandwidth_interval_seconds=raw["bandwidth_interval_seconds"],
         data_dir=Path(raw["data_dir"]),
+        router_address=raw.get("router_address") or None,
+        public_address=raw.get("public_address") or DEFAULT_PUBLIC_ADDRESS,
+        device_scan_seconds=raw.get("device_scan_seconds") or DEFAULT_DEVICE_SCAN_SECONDS,
+        bandwidth_test_mb=raw.get("bandwidth_test_mb") or DEFAULT_BANDWIDTH_TEST_MB,
     )

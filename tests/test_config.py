@@ -75,6 +75,51 @@ def test_all_problems_listed_together(tmp_path):
         assert expected in message
 
 
+def test_targets_default_when_missing(tmp_path):
+    config = load_config(write_config(tmp_path, router_address=None, public_address=None))
+    assert config.router_address is None
+    assert config.public_address == "1.1.1.1"
+
+
+def test_targets_from_example():
+    config = load_config(EXAMPLE)
+    assert config.router_address is None  # blank = find automatically
+    assert config.public_address == "1.1.1.1"
+
+
+@pytest.mark.parametrize("bad", ["-t", "1.1.1.1; rm -rf /", "1.1.1.1 -n 99", "a b"])
+def test_bad_targets_rejected(tmp_path, bad):
+    with pytest.raises(ConfigError, match="'public_address' must be an IP address or hostname"):
+        load_config(write_config(tmp_path, public_address=bad))
+
+
 def test_localhost_http_allowed(tmp_path):
     config = load_config(write_config(tmp_path, cloud_url="http://localhost:8080"))
     assert config.cloud_url == "http://localhost:8080"
+
+
+def test_scan_and_bandwidth_size_from_example():
+    config = load_config(EXAMPLE)
+    assert config.device_scan_seconds == 300
+    assert config.bandwidth_test_mb == 25
+
+
+def test_scan_and_bandwidth_size_default_when_missing(tmp_path):
+    config = load_config(write_config(tmp_path, device_scan_seconds=None, bandwidth_test_mb=None))
+    assert config.device_scan_seconds == 300
+    assert config.bandwidth_test_mb == 25
+
+
+@pytest.mark.parametrize(
+    "changes, expected",
+    [
+        ({"device_scan_seconds": 0}, "'device_scan_seconds' must be a whole number above 0"),
+        ({"device_scan_seconds": "5m"}, "'device_scan_seconds' must be a whole number above 0"),
+        ({"bandwidth_test_mb": -1}, "'bandwidth_test_mb' must be a whole number above 0"),
+        ({"bandwidth_test_mb": True}, "'bandwidth_test_mb' must be a whole number above 0"),
+        ({"bandwidth_test_mb": 501}, "'bandwidth_test_mb' must be 500 or less"),
+    ],
+)
+def test_bad_scan_or_bandwidth_size_rejected(tmp_path, changes, expected):
+    with pytest.raises(ConfigError, match=expected):
+        load_config(write_config(tmp_path, **changes))

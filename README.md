@@ -41,7 +41,10 @@ Edit `config.yaml` and set `cloud_url` and `setup_code`. Leave `site_id` and `si
 python -m signalbloom_agent              # start the agent
 python -m signalbloom_agent --demo-fault # inject a fake fault for demos (not implemented yet)
 python -m signalbloom_agent --help
+python -m signalbloom_agent --collect-once  # measure once, print the reading, exit (nothing is sent)
 ```
+
+`--collect-once` prints a body shaped like `POST /api/ingest` in docs/API.md: `{"readings": [...], "devices": [...]}`. Latency and packet loss are measured to `public_address` (default 1.1.1.1). `download_mbps` comes from timing an HTTPS download of `bandwidth_test_mb` megabytes. `devices` comes from pinging every address in the local /24 and reading the ARP table (no admin rights needed). It takes 10–30 seconds. The router (`router_address`, or the default gateway if blank) is shown on a separate "local only" line.
 
 On first run the agent registers with `setup_code`, saves `site_id` and `site_token` into `config.yaml`, clears `setup_code`, and limits the file to your user account. Later runs skip registration.
 

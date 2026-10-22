@@ -19,5 +19,20 @@ interval_seconds: 30
 # How often to run the bandwidth test (seconds). 900 = 15 minutes.
 bandwidth_interval_seconds: 900
 
+# Size of the file downloaded for the bandwidth test (megabytes, up to 500).
+# Bigger is more accurate on fast links but uses more data: 25 MB every
+# 15 minutes is about 2.4 GB a day.
+bandwidth_test_mb: 25
+
+# How often to run a full scan for devices on the network (seconds).
+# Between full scans, devices already found are rechecked every interval_seconds.
+device_scan_seconds: 300
+
 # Where the agent keeps readings it could not send yet.
 data_dir: ./data
+
+# Your router's address. Leave blank to find it automatically (default gateway).
+router_address:
+
+# A reliable address on the internet, used for latency, packet loss and uptime.
+public_address: 1.1.1.1

@@ -1,0 +1,16 @@
+
+Interface: 192.168.56.1 --- 0x3
+  Internet Address      Physical Address      Type
+  192.168.56.101        08-00-27-11-22-33     dynamic   
+  192.168.56.255        ff-ff-ff-ff-ff-ff     static    
+  224.0.0.22            01-00-5e-00-00-16     static    
+
+Interface: 192.168.1.7 --- 0x5
+  Internet Address      Physical Address      Type
+  192.168.1.1           A4-2B-B0-AA-BB-CC     dynamic   
+  192.168.1.20          aa-bb-cc-dd-ee-01     dynamic   
+  192.168.1.35          3c-22-fb-0d-0e-0f     dynamic   
+  192.168.1.255         ff-ff-ff-ff-ff-ff     static    
+  224.0.0.251           01-00-5e-00-00-fb     static    
+  239.255.255.250       01-00-5e-7f-ff-fa     static    
+  255.255.255.255       ff-ff-ff-ff-ff-ff     static    
