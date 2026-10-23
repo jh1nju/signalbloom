@@ -13,6 +13,8 @@ DEFAULT_DEVICE_SCAN_SECONDS = 300
 DEFAULT_DEVICE_RECHECK_SECONDS = 20
 DEFAULT_BANDWIDTH_TEST_MB = 25
 MAX_BANDWIDTH_TEST_MB = 500
+DEFAULT_DEMO_FAULT_LATENCY_MS = 300
+DEFAULT_DEMO_FAULT_LOSS_PCT = 20
 
 # Hostnames and IPv4/IPv6 addresses. Must not start with "-", so a value like
 # "-t" can't be passed to ping as an option.
@@ -37,6 +39,8 @@ class Config:
     device_scan_seconds: int = DEFAULT_DEVICE_SCAN_SECONDS
     device_recheck_seconds: int = DEFAULT_DEVICE_RECHECK_SECONDS
     bandwidth_test_mb: int = DEFAULT_BANDWIDTH_TEST_MB
+    demo_fault_latency_ms: int = DEFAULT_DEMO_FAULT_LATENCY_MS
+    demo_fault_loss_pct: int = DEFAULT_DEMO_FAULT_LOSS_PCT
 
     def __repr__(self) -> str:
         # Never show the site token, so it can't end up in logs (docs/API.md).
@@ -50,7 +54,9 @@ class Config:
             f"public_address={self.public_address!r}, "
             f"device_scan_seconds={self.device_scan_seconds}, "
             f"device_recheck_seconds={self.device_recheck_seconds}, "
-            f"bandwidth_test_mb={self.bandwidth_test_mb})"
+            f"bandwidth_test_mb={self.bandwidth_test_mb}, "
+            f"demo_fault_latency_ms={self.demo_fault_latency_ms}, "
+            f"demo_fault_loss_pct={self.demo_fault_loss_pct})"
         )
 
 
@@ -68,6 +74,13 @@ def _validate(raw: dict, path: Path) -> None:
     mb = raw.get("bandwidth_test_mb")
     if isinstance(mb, int) and not isinstance(mb, bool) and mb > MAX_BANDWIDTH_TEST_MB:
         problems.append(f"'bandwidth_test_mb' must be {MAX_BANDWIDTH_TEST_MB} or less")
+    for key in ("demo_fault_latency_ms", "demo_fault_loss_pct"):
+        v = raw.get(key)
+        if v is not None and (isinstance(v, bool) or not isinstance(v, int) or v < 0):
+            problems.append(f"'{key}' must be a whole number, 0 or more")
+    loss = raw.get("demo_fault_loss_pct")
+    if isinstance(loss, int) and not isinstance(loss, bool) and loss > 100:
+        problems.append("'demo_fault_loss_pct' must be 100 or less")
     url = str(raw.get("cloud_url") or "")
     parsed = urlparse(url)
     local = parsed.scheme == "http" and parsed.hostname in {"localhost", "127.0.0.1"}
@@ -114,4 +127,14 @@ def load_config(path: str | Path = DEFAULT_PATH) -> Config:
         device_scan_seconds=raw.get("device_scan_seconds") or DEFAULT_DEVICE_SCAN_SECONDS,
         device_recheck_seconds=raw.get("device_recheck_seconds") or DEFAULT_DEVICE_RECHECK_SECONDS,
         bandwidth_test_mb=raw.get("bandwidth_test_mb") or DEFAULT_BANDWIDTH_TEST_MB,
+        # Explicit None checks: 0 is a valid amount here.
+        demo_fault_latency_ms=_or_default(raw, "demo_fault_latency_ms",
+                                          DEFAULT_DEMO_FAULT_LATENCY_MS),
+        demo_fault_loss_pct=_or_default(raw, "demo_fault_loss_pct",
+                                        DEFAULT_DEMO_FAULT_LOSS_PCT),
     )
+
+
+def _or_default(raw: dict, key: str, default):
+    v = raw.get(key)
+    return default if v is None else v

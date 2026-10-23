@@ -59,6 +59,7 @@ class SendSummary:
     devices_rejected: Reply | None = None  # the cloud refused the device list
     devices_restored: bool = False         # a new full scan ended the pause
     error: str | None = None
+    latest: dict | None = None  # this cycle's reading, shown on the "sent" line
 
     def lines(self) -> list[str]:
         """Short log lines describing this flush."""
@@ -77,8 +78,13 @@ class SendSummary:
         sent = self.accepted + self.duplicates
         if sent:
             via = f" in {self.requests} requests" if self.requests > 1 else ""
-            out.append(f"sent {_plural(sent, 'reading')}{via}, "
-                       f"{_plural(self.duplicates, 'duplicate')}")
+            line = (f"sent {_plural(sent, 'reading')}{via}, "
+                    f"{_plural(self.duplicates, 'duplicate')}")
+            if self.latest is not None:
+                ms = self.latest.get("latency_ms")
+                latency = "no reply" if ms is None else f"{ms} ms"
+                line += f" (latency {latency}, loss {self.latest.get('packet_loss_pct')}%)"
+            out.append(line)
         if self.error:
             out.append(f"{self.error}, {_plural(self.buffered, 'reading')} buffered")
         return out

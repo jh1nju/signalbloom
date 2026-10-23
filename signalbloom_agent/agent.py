@@ -20,6 +20,7 @@ from .collectors.devices import DeviceScanner
 from .collectors.ping import ping
 from .collectors.uptime import internet_up
 from .config import Config
+from .demo import DemoFault
 from .schedule import Ticker, wait_until_due
 from .sender import Sender
 
@@ -160,7 +161,8 @@ class BandwidthWorker:
 
 def run(config: Config, *, stop: threading.Event | None = None, clock=time.monotonic,
         sleep=time.sleep, measure=None, buffer=None, sender=None,
-        devices=None, bandwidth=None, poller=None) -> None:
+        devices=None, bandwidth=None, poller=None, demo=None,
+        demo_fault: bool = False) -> None:
     """Measure and send until `stop` is set or Ctrl+C (KeyboardInterrupt).
 
     Everything after `config` can be swapped out in tests.
@@ -177,6 +179,8 @@ def run(config: Config, *, stop: threading.Event | None = None, clock=time.monot
     bandwidth = bandwidth or BandwidthWorker(
         BandwidthTest(config.bandwidth_test_mb, config.bandwidth_interval_seconds))
     poller = poller or CommandPoller(config)
+    demo = demo or DemoFault(demo_fault, config.data_dir,
+                             config.demo_fault_latency_ms, config.demo_fault_loss_pct)
 
     if getattr(buffer, "bad_lines", 0):
         log.info(f"skipped {buffer.bad_lines} unreadable lines in the buffer file")
@@ -194,6 +198,7 @@ def run(config: Config, *, stop: threading.Event | None = None, clock=time.monot
             speed_test_running = bandwidth.running
             reading = measure()
             reading["download_mbps"] = bandwidth.take_result()
+            reading = demo.process(reading)  # before buffering, so resends match
             bandwidth.start_if_due()  # straight after the ping, so it rarely overlaps one
             if speed_test_running:
                 log.info("latency may be raised by the speed test")
@@ -204,7 +209,9 @@ def run(config: Config, *, stop: threading.Event | None = None, clock=time.monot
                          + ("reading" if dropped == 1 else "readings"))
 
             device_list, scan_id = devices.current()
-            for line in sender.flush(device_list, scan=scan_id).lines():
+            summary = sender.flush(device_list, scan=scan_id)
+            summary.latest = reading
+            for line in summary.lines():
                 log.info(line)
             poller.poll(device_list)  # after the send; may take a few seconds per fix
 

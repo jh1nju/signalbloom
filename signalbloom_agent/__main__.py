@@ -65,7 +65,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--demo-fault",
         action="store_true",
-        help="inject a fake network fault for demos (not implemented yet)",
+        help="make readings look like a network fault (for demos)",
     )
     parser.add_argument(
         "--collect-once",
@@ -95,12 +95,9 @@ def main(argv: list[str] | None = None) -> int:
     else:
         print(f"Registered as site {config.site_id}.")
 
-    if args.demo_fault:
-        print("--demo-fault is not implemented yet.")
-
     setup_logging(config.data_dir)
     try:
-        run(config)
+        run(config, demo_fault=args.demo_fault)
     except KeyboardInterrupt:
         print("Stopped.")
         return 0

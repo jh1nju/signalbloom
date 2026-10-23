@@ -38,3 +38,12 @@ router_address:
 
 # A reliable address on the internet, used for latency, packet loss and uptime.
 public_address: 1.1.1.1
+
+# Demo fault: makes readings look like a network problem, for demos only.
+# It is on when the agent is started with --demo-fault, or while a file named
+# demo_fault exists in data_dir (create it to turn the fault on, delete it to
+# turn it off; takes effect within one interval, no restart needed).
+# While on, these amounts are added to each reading before it is sent.
+# The cloud is not told, so it treats the readings as a real problem.
+demo_fault_latency_ms: 300   # added to latency (milliseconds)
+demo_fault_loss_pct: 20      # added to packet loss (percentage points, capped at 100)
