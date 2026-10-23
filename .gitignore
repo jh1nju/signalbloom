@@ -4,6 +4,7 @@ __pycache__/
 *.pyc
 .pytest_cache/
 .pytest-tmp*/
+.pytest_tmp/
 
 # Local agent state: config.yaml holds the site token and must never be committed
 config.yaml
