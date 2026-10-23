@@ -13,7 +13,7 @@ The agent is a small Python program that runs on a computer inside a customer's 
 
 The contract between the agent and the cloud is [docs/API.md](docs/API.md). The product spec is [docs/SPEC.md](docs/SPEC.md).
 
-> Status: registration, measuring and sending work. Collecting approved fixes is not built yet.
+> Status: registration, measuring, sending, and collecting approved (simulated) fixes all work.
 
 ### Install
 
@@ -53,6 +53,8 @@ With no flags the agent runs until Ctrl+C:
 - The bandwidth test runs every `bandwidth_interval_seconds` (900) in the background, started right after a ping. Its result goes into the next reading.
 - If the cloud can't be reached or returns a 5xx error, readings are kept in `data_dir/buffer.jsonl` and sent oldest first (up to 500 per request) once it's back. The buffer holds 24 hours of readings and drops the oldest after that.
 - A reading the cloud rejects with 400 is saved to `data_dir/rejected.jsonl`. A 401 or 403 stops the agent with instructions to register again.
+- After each send it checks `GET /api/agent/commands` for fixes an Admin approved. Only `restart_device`, `isolate_device` and `reconnect_device` are allowed, and all are simulated: the agent finds the device by MAC in its current device list, waits 2 seconds, and reports success (for example `Simulated restart of 192.168.88.5 (6c:94:66:bd:f2:68) completed.`). A MAC not on this network is reported as failed. Any other command type is refused, logged as a warning, and reported as failed. The agent never runs commands from the cloud.
+- Each fix runs at most once. Its progress and result are saved in `data_dir/commands.json`, so a result the cloud couldn't receive is sent again next cycle without redoing the fix.
 - Each send writes one line to the console and to `data_dir/agent.log`, for example `sent 1 reading, 0 duplicates` or `cloud unreachable, 3 readings buffered`. The site token is never logged.
 
 On first run the agent registers with `setup_code`, saves `site_id` and `site_token` into `config.yaml`, clears `setup_code`, and limits the file to your user account. Later runs skip registration.
@@ -65,9 +67,18 @@ python -m pytest
 
 ### Try it against the fake cloud (testing only)
 
-`tools/fake_cloud.py` is a local stand-in for the cloud app. It implements the four endpoints in docs/API.md and accepts one setup code, `TEST-CODE-0001`, once. Registered sites and received readings are saved to `tools/.fake_cloud_state.json` (git-ignored), so a restart keeps the token and the readings; delete that file to start fresh. Devices and commands are kept in memory only.
+`tools/fake_cloud.py` is a local stand-in for the cloud app. It implements the four endpoints in docs/API.md and accepts one setup code, `TEST-CODE-0001`, once. Registered sites, received readings, and commands with their results are saved to `tools/.fake_cloud_state.json` (git-ignored), so a restart keeps them; delete that file to start fresh. Devices are kept in memory only.
 
-`http://localhost:8080/debug/summary` shows, for each site, how many readings have arrived, the earliest and latest `measured_at`, and the current device list with online status.
+`http://localhost:8080/debug/summary` shows, for each site, how many readings have arrived, the earliest and latest `measured_at`, the current device list with online status, and each command with its result.
+
+To queue a fix while everything is running, use a MAC from the summary's device list:
+
+```powershell
+Invoke-RestMethod -Method Post http://localhost:8080/debug/commands -ContentType application/json `
+  -Body '{"type": "restart_device", "target_mac": "aa:bb:cc:dd:ee:01"}'
+```
+
+Any `type` is accepted, so you can also queue `"type": "shell"` to see the agent refuse it. Add `"site_id"` if more than one site is registered.
 
 ```powershell
 python tools/fake_cloud.py               # add --with-command to queue a simulated fix

@@ -24,7 +24,7 @@ REJECTED_FILE = "rejected.jsonl"
 REREGISTER = (
     "Get a new setup code from Account & Settings in the SignalBloom dashboard, "
     "put it in config.yaml as setup_code, clear site_token, and start the agent again. "
-    "Readings not sent yet are kept and will be sent after registering."
+    "Readings and fix results not sent yet are kept and will be sent after registering."
 )
 
 

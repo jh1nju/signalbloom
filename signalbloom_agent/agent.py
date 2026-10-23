@@ -1,4 +1,5 @@
-"""The agent's main loop: measure every interval_seconds, buffer, send.
+"""The agent's main loop: measure every interval_seconds, buffer, send,
+then collect approved fixes.
 
 Device scans and the bandwidth test run in background threads, so a slow
 scan or download never delays a send.
@@ -13,6 +14,7 @@ from pathlib import Path
 
 from . import __version__
 from .buffer import ReadingBuffer, cap_for
+from .commands import CommandPoller
 from .collectors.bandwidth import BandwidthTest
 from .collectors.devices import DeviceScanner
 from .collectors.ping import ping
@@ -158,7 +160,7 @@ class BandwidthWorker:
 
 def run(config: Config, *, stop: threading.Event | None = None, clock=time.monotonic,
         sleep=time.sleep, measure=None, buffer=None, sender=None,
-        devices=None, bandwidth=None) -> None:
+        devices=None, bandwidth=None, poller=None) -> None:
     """Measure and send until `stop` is set or Ctrl+C (KeyboardInterrupt).
 
     Everything after `config` can be swapped out in tests.
@@ -174,11 +176,14 @@ def run(config: Config, *, stop: threading.Event | None = None, clock=time.monot
         config.device_recheck_seconds)
     bandwidth = bandwidth or BandwidthWorker(
         BandwidthTest(config.bandwidth_test_mb, config.bandwidth_interval_seconds))
+    poller = poller or CommandPoller(config)
 
     if getattr(buffer, "bad_lines", 0):
         log.info(f"skipped {buffer.bad_lines} unreadable lines in the buffer file")
     if len(buffer):
         log.info(f"{len(buffer)} readings from an earlier run waiting to be sent")
+    if getattr(poller, "waiting", 0):
+        log.info(f"{poller.waiting} fix results from an earlier run waiting to be reported")
     log.info(f"SignalBloom agent v{__version__} running as site {config.site_id}, "
              f"sending every {config.interval_seconds} s. Press Ctrl+C to stop.")
 
@@ -201,6 +206,7 @@ def run(config: Config, *, stop: threading.Event | None = None, clock=time.monot
             device_list, scan_id = devices.current()
             for line in sender.flush(device_list, scan=scan_id).lines():
                 log.info(line)
+            poller.poll(device_list)  # after the send; may take a few seconds per fix
 
             skipped = ticker.advance()
             if skipped:

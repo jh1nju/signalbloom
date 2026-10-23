@@ -1,12 +1,17 @@
 """Fake SignalBloom cloud. FOR LOCAL TESTING ONLY. Standard library only.
 
 Implements the four endpoints in docs/API.md. Registered sites (and their
-tokens) and received readings are saved to a state file so a restart keeps
-them; devices and commands are kept in memory only. Accepts one setup code,
-TEST-CODE-0001, once.
+tokens), received readings, and commands with their results are saved to a
+state file so a restart keeps them; devices are kept in memory only. Accepts
+one setup code, TEST-CODE-0001, once.
 
-Also: GET /debug/summary shows, per site, how many readings arrived, the
-earliest and latest measured_at, and the device list.
+Also:
+- GET /debug/summary shows, per site, how many readings arrived, the earliest
+  and latest measured_at, the device list, and each command with its result.
+- POST /debug/commands queues a command, with body
+  {"type": "restart_device", "target_mac": "aa:bb:cc:dd:ee:01"}. Any type is
+  accepted, so the agent's refusal of unsupported types can be tried. Add
+  "site_id" when more than one site is registered.
 
 Run:  python tools/fake_cloud.py [--port 8080] [--with-command] [--state PATH]
 Then set cloud_url: http://localhost:8080 in config.yaml.
@@ -34,7 +39,7 @@ def now() -> str:
 
 
 class FakeCloud:
-    """All state lives here. code_used, sites and readings are saved to state_path."""
+    """All state lives here. Everything except devices is saved to state_path."""
 
     def __init__(self, with_command: bool = False, state_path: str | Path | None = None):
         self.lock = threading.Lock()
@@ -59,6 +64,11 @@ class FakeCloud:
                 str(site_id): {str(t): r for t, r in by_time.items() if isinstance(r, dict)}
                 for site_id, by_time in state.get("readings", {}).items()
             }
+            # Older state files have no commands yet.
+            self.commands = {
+                str(k): c for k, c in state.get("commands", {}).items()
+                if isinstance(c, dict) and {"site_id", "command", "sent", "result"} <= c.keys()
+            }
         except (ValueError, KeyError, TypeError, AttributeError):
             print(f"Ignoring unreadable state file {self.state_path}", flush=True)
 
@@ -67,9 +77,27 @@ class FakeCloud:
         if self.state_path is None:
             return
         tmp = self.state_path.with_suffix(".tmp")
-        state = {"code_used": self.code_used, "sites": self.sites, "readings": self.readings}
+        state = {"code_used": self.code_used, "sites": self.sites,
+                 "readings": self.readings, "commands": self.commands}
         tmp.write_text(json.dumps(state), encoding="utf-8")
         tmp.replace(self.state_path)
+
+    def queue_command(self, site_id: str, command_type: str, target_mac: str) -> dict:
+        """Queue a command as if an Admin approved it. Call with self.lock held."""
+        command_id = "cmd_" + secrets.token_hex(3)
+        while command_id in self.commands:
+            command_id = "cmd_" + secrets.token_hex(3)
+        command = {
+            "id": command_id,
+            "type": command_type,
+            "target": {"mac": target_mac},
+            "approved_at": now(),
+            "simulated": True,
+        }
+        self.commands[command_id] = {"site_id": site_id, "sent": False, "result": None,
+                                     "command": command}
+        self.save_state()
+        return command
 
     def summary(self) -> dict:
         with self.lock:
@@ -80,6 +108,16 @@ class FakeCloud:
                     "devices": [
                         {k: d.get(k) for k in ("mac", "ip", "hostname", "online")}
                         for d in self.devices.get(site_id, {}).values()
+                    ],
+                    "commands": [
+                        {
+                            "id": c["command"].get("id"),
+                            "type": c["command"].get("type"),
+                            "target_mac": (c["command"].get("target") or {}).get("mac"),
+                            "sent": c["sent"],
+                            "result": c["result"],
+                        }
+                        for c in self.commands.values() if c["site_id"] == site_id
                     ],
                 }
                 for site_id in sorted(set(self.sites.values()))
@@ -119,6 +157,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.register()
         if self.path == "/api/ingest":
             return self.ingest()
+        if self.path == "/debug/commands":
+            return self.debug_queue_command()
         match = RESULT_PATH.fullmatch(self.path)
         if match:
             return self.command_result(match.group(1))
@@ -189,19 +229,7 @@ class Handler(BaseHTTPRequestHandler):
             self.cloud.sites[site_token] = site_id
             self.cloud.save_state()
             if self.cloud.with_command:
-                command_id = "cmd_" + secrets.token_hex(2)
-                self.cloud.commands[command_id] = {
-                    "site_id": site_id,
-                    "sent": False,
-                    "result": None,
-                    "command": {
-                        "id": command_id,
-                        "type": "restart_device",
-                        "target": {"mac": "aa:bb:cc:dd:ee:01"},
-                        "approved_at": now(),
-                        "simulated": True,
-                    },
-                }
+                self.cloud.queue_command(site_id, "restart_device", "aa:bb:cc:dd:ee:01")
         print(f"Registered {site_id} for host {body['hostname']!r}", flush=True)  # never the token
         self.send_json(201, {
             "site_id": site_id,
@@ -264,6 +292,8 @@ class Handler(BaseHTTPRequestHandler):
             ]
             for c in waiting:
                 c["sent"] = True
+            if waiting:
+                self.cloud.save_state()
         self.send_json(200, {"commands": [c["command"] for c in waiting]})
 
     # 4. Command result
@@ -290,8 +320,33 @@ class Handler(BaseHTTPRequestHandler):
                     400, "invalid_body", "status (succeeded/failed) and finished_at are required."
                 )
             command["result"] = body
-        print(f"Result for {command_id}: {body['status']}", flush=True)
+            self.cloud.save_state()
+        print(f"Result for {command_id}: {body['status']} - {body.get('message')}", flush=True)
         self.send_json(200, {"recorded": True})
+
+    # Debug: queue a command
+
+    def debug_queue_command(self):
+        body = self.read_json()
+        if body is None:
+            return
+        if not all(isinstance(body.get(k), str) and body[k] for k in ("type", "target_mac")):
+            return self.send_error_json(400, "invalid_body", "type and target_mac are required.")
+        with self.cloud.lock:
+            site_ids = sorted(set(self.cloud.sites.values()))
+            site_id = body.get("site_id")
+            if site_id is None:
+                if len(site_ids) != 1:
+                    return self.send_error_json(
+                        400, "invalid_body",
+                        f"Add site_id; registered sites: {', '.join(site_ids) or 'none'}.")
+                site_id = site_ids[0]
+            elif site_id not in site_ids:
+                return self.send_error_json(404, "site_not_found", "No such site.")
+            command = self.cloud.queue_command(site_id, body["type"], body["target_mac"])
+        print(f"Queued {command['id']} for {site_id}: {body['type']} {body['target_mac']}",
+              flush=True)
+        self.send_json(201, command)
 
 
 class IPv6Server(ThreadingHTTPServer):
@@ -342,6 +397,8 @@ def main() -> None:
     else:
         print(f"Setup code: {SETUP_CODE} (works once). Ctrl+C to stop.", flush=True)
     print(f"Summary: http://localhost:{args.port}/debug/summary", flush=True)
+    print(f"Queue a fix: POST http://localhost:{args.port}/debug/commands "
+          '{"type": "restart_device", "target_mac": "..."}', flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

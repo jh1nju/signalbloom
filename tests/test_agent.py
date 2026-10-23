@@ -46,6 +46,21 @@ class FakeDevices:
         return self.snapshot(), 1
 
 
+class FakePoller:
+    """Records each poll's device list instead of calling the cloud."""
+
+    waiting = 0
+
+    def __init__(self, error=None):
+        self.polls = []
+        self.error = error
+
+    def poll(self, devices):
+        self.polls.append(devices)
+        if self.error:
+            raise self.error
+
+
 class RecordingSender:
     """Records what was in the buffer at each flush, then 'sends' it all."""
 
@@ -97,8 +112,10 @@ def test_loop_sends_on_schedule_with_bandwidth_in_background(tmp_path, caplog):
         return {"measured_at": f"r{len(calls)}", "download_mbps": "not set"}
 
     devices = FakeDevices()
+    poller = FakePoller()
     run(make_config(tmp_path), stop=stop, clock=clock, sleep=clock.sleep, measure=measure,
-        buffer=buffer, sender=sender, devices=devices, bandwidth=bandwidth)
+        buffer=buffer, sender=sender, devices=devices, bandwidth=bandwidth,
+        poller=poller)
 
     assert calls == [0.0, 30.0, 60.0]  # no drift from the 4 s pings
     assert [f[0] for f in sender.flushes] == [4.0, 34.0, 64.0]
@@ -107,6 +124,7 @@ def test_loop_sends_on_schedule_with_bandwidth_in_background(tmp_path, caplog):
     assert all(f[2] == DEVICES for f in sender.flushes)
     assert caplog.text.count("latency may be raised by the speed test") == 1
     assert devices.started and devices.stopped
+    assert poller.polls == [DEVICES] * 3  # once per cycle, after the send
 
 
 def test_ctrl_c_stops_the_device_worker(tmp_path):
@@ -121,7 +139,8 @@ def test_ctrl_c_stops_the_device_worker(tmp_path):
     bandwidth.take_result.return_value = None
     with pytest.raises(KeyboardInterrupt):
         run(make_config(tmp_path), sleep=sleep, measure=lambda: {"measured_at": "x"},
-            buffer=buffer, sender=sender, devices=devices, bandwidth=bandwidth)
+            buffer=buffer, sender=sender, devices=devices, bandwidth=bandwidth,
+            poller=FakePoller())
     assert devices.stopped
     assert len(sender.flushes) == 1
 
@@ -138,11 +157,49 @@ def test_full_buffer_is_logged(tmp_path, caplog):
     bandwidth.take_result.return_value = None
     run(make_config(tmp_path), stop=stop, sleep=lambda _: None,
         measure=lambda: {"measured_at": "new"}, buffer=buffer, sender=sender,
-        devices=FakeDevices(), bandwidth=bandwidth)
+        devices=FakeDevices(), bandwidth=bandwidth, poller=FakePoller())
     assert "1 readings from an earlier run" in caplog.text
     assert "buffer full, dropped 1 oldest reading" in caplog.text
     assert "cloud unreachable, 1 reading buffered" in caplog.text
     assert buffer.oldest(1)[0]["measured_at"] == "new"
+
+
+def test_poll_runs_after_the_send(tmp_path):
+    order = []
+    sender = MagicMock()
+    sender.flush.side_effect = lambda _d, scan=None: (order.append("send"), SendSummary())[1]
+    poller = FakePoller()
+    poller.poll = lambda devices: order.append("poll")
+    bandwidth = MagicMock(running=False)
+    bandwidth.take_result.return_value = None
+    stop = threading.Event()
+    measure_calls = []
+
+    def measure():
+        measure_calls.append(1)
+        if len(measure_calls) == 2:
+            stop.set()
+        return {"measured_at": f"r{len(measure_calls)}"}
+
+    run(make_config(tmp_path), stop=stop, sleep=lambda _: None, measure=measure,
+        buffer=ReadingBuffer(tmp_path, 10), sender=sender, devices=FakeDevices(),
+        bandwidth=bandwidth, poller=poller)
+    assert order == ["send", "poll", "send", "poll"]
+
+
+def test_auth_error_from_poller_stops_the_loop(tmp_path):
+    devices = FakeDevices()
+    bandwidth = MagicMock(running=False)
+    bandwidth.take_result.return_value = None
+    buffer = ReadingBuffer(tmp_path, 10)
+    sender = RecordingSender(buffer)
+    sender.clock = lambda: 0
+    with pytest.raises(AuthError, match="register"):
+        run(make_config(tmp_path), sleep=lambda _: None, measure=lambda: {"measured_at": "x"},
+            buffer=buffer, sender=sender, devices=devices, bandwidth=bandwidth,
+            poller=FakePoller(AuthError("Please register again.")))
+    assert devices.stopped
+    assert len(sender.flushes) == 1
 
 
 def test_device_worker_keeps_last_list_when_a_scan_fails():
